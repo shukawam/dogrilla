@@ -1,5 +1,5 @@
 # 既定の project 名はディレクトリ名になり、同名ディレクトリの別環境の DP を作り直してしまう
-name: kong-agent-gateway
+name: dogrilla
 
 x-kong-hardening: &kong-hardening
   # expressions でないと新しいルータ構文のルートが動かない

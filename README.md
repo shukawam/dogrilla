@@ -1,4 +1,4 @@
-# kong-agent-gateway
+# dogrilla
 
 個人のサブスクリプション（Claude Max、ChatGPT）で動く Claude Code と Codex CLI のリクエストをローカルの Kong AI Gateway に通し、Konnect の AI Cost Management で利用者（Principal）・セッション・リポジトリ単位に見るための環境です。サブスクリプションのログインはそのまま上流に届くので、API 課金にはなりません。
 
@@ -21,7 +21,7 @@ api.anthropic.com / chatgpt.com（Codex は compose 内の中継を経由）
 ## セットアップ
 
 ```bash
-git clone <this repo> && cd kong-agent-gateway
+git clone <this repo> && cd dogrilla
 mise trust && mise install          # kongctl を固定版で入れる
 cp .env.example .env && chmod 600 .env
 # .env の PREFIX（例: 自分のユーザー名）と KONNECT_PAT を埋める
