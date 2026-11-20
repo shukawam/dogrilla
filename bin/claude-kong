@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# usage: claude-kong [claude args...]
+# 別プロファイルで使うときは CLAUDE_CONFIG_DIR=~/.claude-xxx claude-kong
+set -euo pipefail
+# shellcheck source=../lib/env.sh
+. "$(dirname "$(readlink -f "$0")")/../lib/env.sh"
+
+"$ROOT/bin/kong-up"
+# 呼び出し元の mise env などに入っている PAT をエージェントに渡さない
+unset KONNECT_PAT
+key=$(resolve_virtual_key)
+
+# どれか 1 つでも有効だと claude.ai のログインが使われず、サブスクリプションではなく API 課金になる
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+
+ANTHROPIC_BASE_URL="$(proxy_url)/claude"
+export ANTHROPIC_BASE_URL
+# カスタム base URL では既定でオフ。無いと agent-request-kind / agent-type のタグが付かない
+export CLAUDE_CODE_GATEWAY_HINT_HEADERS=1
+
+# Authorization は claude.ai の OAuth トークンが使うので、Kong の認証は apikey で送る
+headers="apikey: ${key}"
+
+send_scm=1
+IFS=: read -r -a excludes <<< "$(env_or_file SCM_TAG_EXCLUDE_DIRS)"
+# macOS 標準の bash 3.2 は set -u で空配列の展開を unbound variable にする
+for d in ${excludes[@]+"${excludes[@]}"}; do
+  [ -n "$d" ] || continue
+  d="${d/#\~/$HOME}"
+  case "$(pwd -P)/" in "${d%/}/"*) send_scm=0 ;; esac
+done
+
+if [ "$send_scm" = 1 ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  remote=$(git remote get-url origin 2>/dev/null || true)
+  if [ -n "$remote" ]; then
+    repo=$(printf '%s' "$remote" | sed -E 's#\.git$##; s#^.*[:/]([^/]+/[^/]+)$#\1#')
+    case "$remote" in
+      *github.com*) headers+=$'\n'"ai-cost-scm-provider: github" ;;
+      *gitlab*)     headers+=$'\n'"ai-cost-scm-provider: gitlab" ;;
+    esac
+    headers+=$'\n'"ai-cost-scm-repository: ${repo}"
+  fi
+  # 空の値を送ると、落ちずに " " というタグ値になる
+  branch=$(git branch --show-current 2>/dev/null || true)
+  if [ -n "$branch" ]; then
+    headers+=$'\n'"ai-cost-scm-branch: ${branch}"
+  fi
+fi
+# リポジトリの .claude/settings.json に env.ANTHROPIC_CUSTOM_HEADERS があると、これが丸ごと置き換わって apikey が消え 401 になる
+export ANTHROPIC_CUSTOM_HEADERS="$headers"
+
+exec claude "$@"

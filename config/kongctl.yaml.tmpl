@@ -1,0 +1,191 @@
+# mise run render が PREFIX を埋めて config/kongctl.yaml を生成する。編集するのはこのテンプレートの方
+_defaults:
+  kongctl:
+    namespace: ${PREFIX}-agent-gateway
+
+ai_gateways:
+  - ref: agent-gateway
+    name: ${PREFIX}-agent-gateway
+    display_name: ${PREFIX}-agent-gateway
+    deployment_type: hybrid
+    # Konnect は min_runtime_version より新しい版の項目を受け付けないので、DP が動かせない設定を入れさせない。
+    # 版がずれても同期自体は止まらない（2.3 の CP に 2.2.0 の DP で実測）。自動昇格は最低版を上げ、下げられなくなる
+    min_runtime_version: '2.3'
+    runtime_auto_upgrade: false
+
+    # ヘッダーを 1 つも持たせない。Kong が何も注入しないので、クライアントの Authorization（Max の OAuth、
+    # ChatGPT ログインのトークンと chatgpt-account-id）がそのまま上流に届く
+    model_providers:
+      - ref: anthropic-subscription-passthrough
+        name: anthropic-subscription-passthrough
+        display_name: Anthropic (client-provided auth)
+        type: anthropic
+        config: &client-provided-auth
+          auth:
+            type: basic
+      - ref: chatgpt-subscription-passthrough
+        name: chatgpt-subscription-passthrough
+        display_name: ChatGPT Codex backend (client-provided auth)
+        type: openai
+        config: *client-provided-auth
+
+    auth_strategies:
+      - ref: virtual-key-auth
+        name: virtual-key-auth
+        display_name: virtual key auth (Virtual Key in apikey)
+        type: key-auth
+        config:
+          # x-api-key を読ませない。上流の Anthropic が意味を持つヘッダーなので、Kong の認証と混ぜない
+          key_names: [apikey]
+          key_in_header: true
+          key_in_query: false
+          key_in_body: false
+          hide_credentials: true
+          # 既定の identity_realms が入ると principals.enabled と排他になり 400 になる
+          identity_realms: []
+          principals:
+            enabled: true
+            directory: default
+            error_on_miss: true
+
+    # Claude Code 用。passthrough だとイベントの model が target 名になり、単価を引けず $0 になる。しかも passthrough は route.model を拒否する
+    # （model aliases are not supported with the passthrough format）ので、モデル別に分けるには anthropic 形式にするしかない。
+    # Model 名と target 名は Price Catalog が知っている Anthropic のモデル ID に合わせる。anthropic 形式は Konnect が path に /v1/messages を足す。
+    #
+    # 受け皿（route.model 無しの Model）は置けない。同じ path に同居させると、どの values にも当たらないリクエストは
+    # 受け皿に届かず 500（ai-gateway.upstream.local の DNS 失敗）になる。Claude Code が要求するモデル ID はここに全部並べる。
+    # 旧世代の 2 つは、背景処理が設定に関係なく要求することがあるため
+    #
+    # Codex 用。ChatGPT ログインの Codex は api.openai.com ではなく chatgpt.com/backend-api/codex の Responses API を叩く。
+    # passthrough にはしない。passthrough の usage 解析は Responses API のストリーム（usage が response の下にある）を読めず、トークン数が 0 になる。
+    # Model 名と target 名はモデル ID に合わせる（単価が target 名で引かれるため）。ここに無いモデル ID は 500 になる
+    #
+    # 共有部分は先頭の Model の中でアンカーを付けている。kongctl の読み込みには次の制約がある（1.26.0 で実測）
+    # - "_" 始まりのトップレベルキーは受け付けるが、エイリアス解決の前に取り除くので、そこに置いたアンカーは unknown anchor になる
+    # - マージキーで取り込んだキーを同じマップで上書きすると "key already set in map" になる。取り込む側と重ならないキーだけを入れる
+    models:
+      - ref: claude-fable-5-2
+        name: claude-fable-5-2
+        display_name: claude-fable-5-2 (Max subscription)
+        <<:
+          - &model-base
+            type: model
+            enabled: true
+            access:
+              auth_strategies: [!ref virtual-key-auth#name]
+          - &claude
+            formats: [{type: anthropic}]
+            capabilities: [generate]
+        config:
+          <<: &model-config
+            max_request_body_size: 16777216
+            response_streaming: allow
+            logging:
+              payloads: false
+          route: {paths: [/claude], model: {body_param: model, values: [claude-fable-5-2]}}
+        targets:
+          # クライアントの Authorization（Max の OAuth）を上流へ通す
+          - <<: &claude-target
+              provider: anthropic-subscription-passthrough
+              allow_auth_override: true
+              config:
+                type: anthropic
+            name: claude-fable-5-2
+      - ref: claude-opus-5-5
+        name: claude-opus-5-5
+        display_name: claude-opus-5-5 (Max subscription)
+        <<: [*model-base, *claude]
+        config: {<<: *model-config, route: {paths: [/claude], model: {body_param: model, values: [claude-opus-5-5]}}}
+        targets: [{<<: *claude-target, name: claude-opus-5-5}]
+      - ref: claude-sonnet-5-5
+        name: claude-sonnet-5-5
+        display_name: claude-sonnet-5-5 (Max subscription)
+        <<: [*model-base, *claude]
+        config: {<<: *model-config, route: {paths: [/claude], model: {body_param: model, values: [claude-sonnet-5-5]}}}
+        targets: [{<<: *claude-target, name: claude-sonnet-5-5}]
+      - ref: claude-haiku-5-5
+        name: claude-haiku-5-5
+        display_name: claude-haiku-5-5 (Max subscription)
+        <<: [*model-base, *claude]
+        config: {<<: *model-config, route: {paths: [/claude], model: {body_param: model, values: [claude-haiku-5-5]}}}
+        targets: [{<<: *claude-target, name: claude-haiku-5-5}]
+      - ref: claude-opus-5
+        name: claude-opus-5
+        display_name: claude-opus-5 (Max subscription)
+        <<: [*model-base, *claude]
+        config: {<<: *model-config, route: {paths: [/claude], model: {body_param: model, values: [claude-opus-5]}}}
+        targets: [{<<: *claude-target, name: claude-opus-5}]
+      - ref: claude-sonnet-5
+        name: claude-sonnet-5
+        display_name: claude-sonnet-5 (Max subscription)
+        <<: [*model-base, *claude]
+        config: {<<: *model-config, route: {paths: [/claude], model: {body_param: model, values: [claude-sonnet-5]}}}
+        targets: [{<<: *claude-target, name: claude-sonnet-5}]
+
+      - ref: codex-gpt-6-astra
+        name: gpt-6-astra
+        display_name: gpt-6-astra (ChatGPT subscription)
+        <<:
+          - *model-base
+          - &codex
+            formats: [{type: openai}]
+            capabilities: [agentic]
+        config: {<<: *model-config, route: {paths: [/codex], model: {body_param: model, values: [gpt-6-astra]}}}
+        targets:
+          # 上流を chatgpt.com に直接向けない理由は codex-upstream/nginx.conf の先頭
+          - <<: &codex-target
+              provider: chatgpt-subscription-passthrough
+              allow_auth_override: true
+              config:
+                type: openai
+                upstream_url: http://codex-upstream:8080/backend-api/codex/responses
+            name: gpt-6-astra
+      - ref: codex-gpt-6.1-sol
+        name: gpt-6.1-sol
+        display_name: gpt-6.1-sol (ChatGPT subscription)
+        <<: [*model-base, *codex]
+        config: {<<: *model-config, route: {paths: [/codex], model: {body_param: model, values: [gpt-6.1-sol]}}}
+        targets: [{<<: *codex-target, name: gpt-6.1-sol}]
+      - ref: codex-gpt-6-sol
+        name: gpt-6-sol
+        display_name: gpt-6-sol (ChatGPT subscription)
+        <<: [*model-base, *codex]
+        config: {<<: *model-config, route: {paths: [/codex], model: {body_param: model, values: [gpt-6-sol]}}}
+        targets: [{<<: *codex-target, name: gpt-6-sol}]
+      - ref: codex-gpt-6.1-terra
+        name: gpt-6.1-terra
+        display_name: gpt-6.1-terra (ChatGPT subscription)
+        <<: [*model-base, *codex]
+        config: {<<: *model-config, route: {paths: [/codex], model: {body_param: model, values: [gpt-6.1-terra]}}}
+        targets: [{<<: *codex-target, name: gpt-6.1-terra}]
+      - ref: codex-gpt-6-luna
+        name: gpt-6-luna
+        display_name: gpt-6-luna (ChatGPT subscription)
+        <<: [*model-base, *codex]
+        config: {<<: *model-config, route: {paths: [/codex], model: {body_param: model, values: [gpt-6-luna]}}}
+        targets: [{<<: *codex-target, name: gpt-6-luna}]
+      - ref: codex-gpt-5.6-sol
+        name: gpt-5.6-sol
+        display_name: gpt-5.6-sol (ChatGPT subscription)
+        <<: [*model-base, *codex]
+        config: {<<: *model-config, route: {paths: [/codex], model: {body_param: model, values: [gpt-5.6-sol]}}}
+        targets: [{<<: *codex-target, name: gpt-5.6-sol}]
+      - ref: codex-gpt-5.6-terra
+        name: gpt-5.6-terra
+        display_name: gpt-5.6-terra (ChatGPT subscription)
+        <<: [*model-base, *codex]
+        config: {<<: *model-config, route: {paths: [/codex], model: {body_param: model, values: [gpt-5.6-terra]}}}
+        targets: [{<<: *codex-target, name: gpt-5.6-terra}]
+      - ref: codex-gpt-5.6-luna
+        name: gpt-5.6-luna
+        display_name: gpt-5.6-luna (ChatGPT subscription)
+        <<: [*model-base, *codex]
+        config: {<<: *model-config, route: {paths: [/codex], model: {body_param: model, values: [gpt-5.6-luna]}}}
+        targets: [{<<: *codex-target, name: gpt-5.6-luna}]
+
+    data_plane_certificates:
+      - ref: agent-gateway-cert
+        ai_gateway: !ref agent-gateway#id
+        title: Cluster Certificate
+        description: Cluster certificate for ${PREFIX}-agent-gateway
+        cert: !file ../.certs/cluster.crt

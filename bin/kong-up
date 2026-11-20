@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# usage: kong-up        DP を起動して応答するまで待つ（稼働中なら何もしない）
+#        kong-up stop | logs
+set -euo pipefail
+# shellcheck source=../lib/env.sh
+. "$(dirname "$(readlink -f "$0")")/../lib/env.sh"
+
+case "${1:-up}" in
+  stop) compose stop; exit ;;
+  logs) compose logs -f --tail 100; exit ;;
+  up) ;;
+  *) die "usage: kong-up [up|stop|logs]" ;;
+esac
+
+# 稼働中なら compose に触らない。up は環境変数の差で config hash が変わると DP を作り直す
+if curl -sf -o /dev/null --max-time 1 "$(status_url)/status"; then
+  exit 0
+fi
+[ -n "$(env_get CONTROL_PLANE_ID)" ] || die "CONTROL_PLANE_ID が空です。先に mise run setup を実行してください"
+compose up -d --wait
+for _ in $(seq 1 30); do
+  code=$(curl -s -o /dev/null -w '%{http_code}' "$(proxy_url)/" || true)
+  if [ "$code" != "000" ]; then
+    echo "Kong is up: $(proxy_url) (HTTP $code)" >&2
+    exit 0
+  fi
+  sleep 1
+done
+die "Kong が $(proxy_url) で応答しません。kong-up logs で確認してください"

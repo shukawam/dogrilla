@@ -1,0 +1,65 @@
+# 既定の project 名はディレクトリ名になり、同名ディレクトリの別環境の DP を作り直してしまう
+name: kong-agent-gateway
+
+x-kong-hardening: &kong-hardening
+  # expressions でないと新しいルータ構文のルートが動かない
+  KONG_ROUTER_FLAVOR: expressions
+  # 外すと X-Forwarded-For が信用されず元クライアント IP を失う
+  KONG_TRUSTED_IPS: 0.0.0.0/0
+  KONG_REAL_IP_HEADER: X-Forwarded-For
+  KONG_REAL_IP_RECURSIVE: "on"
+
+networks:
+  kong-network:
+
+services:
+  kong:
+    image: kong/kong-ai-gateway:2.3.1
+    networks: [kong-network]
+    restart: on-failure
+    # 平文 http で Max / ChatGPT のトークンが流れるので、ループバック以外に公開しない
+    ports:
+      - 127.0.0.1:${KONG_PROXY_PORT:-18000}:8000
+      - 127.0.0.1:${KONG_STATUS_PORT:-18100}:8100
+    environment:
+      <<: *kong-hardening
+      KONG_ROLE: data_plane
+      KONG_DATABASE: "off"
+      KONG_VITALS: "off"
+      KONG_CLUSTER_MTLS: pki
+      KONG_CLUSTER_CONTROL_PLANE: ${CONTROL_PLANE_ID:?mise run setup を先に実行してください}.${KONNECT_REGION:-us}.cp.konghq.com:443
+      KONG_CLUSTER_SERVER_NAME: ${CONTROL_PLANE_ID}.${KONNECT_REGION:-us}.cp.konghq.com
+      KONG_CLUSTER_TELEMETRY_ENDPOINT: ${CONTROL_PLANE_ID}.${KONNECT_REGION:-us}.tp.konghq.com:443
+      KONG_CLUSTER_TELEMETRY_SERVER_NAME: ${CONTROL_PLANE_ID}.${KONNECT_REGION:-us}.tp.konghq.com
+      KONG_CLUSTER_CERT: /etc/kong/cluster-certs/cluster.crt
+      KONG_CLUSTER_CERT_KEY: /etc/kong/cluster-certs/cluster.key
+      KONG_LUA_SSL_TRUSTED_CERTIFICATE: system
+      KONG_KONNECT_MODE: "on"
+      KONG_CLUSTER_DP_LABELS: type:docker
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
+      # debug は telemetry keepalive を毎秒吐き、クラスタリングの実エラーが埋もれる
+      KONG_LOG_LEVEL: info
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      # attribution plugin は Konnect が streaming の custom plugin として配る。off の DP がつながっていると
+      # Attribution のトグルが Conflict になり、plugin を入れたまま off の DP をつなぐとその DP は設定全体を受け取れない（2.2.1 で実測）
+      KONG_CUSTOM_PLUGIN_STREAMING_ENABLED: "on"
+      # 既定の 8k を超える本文は一時ファイルに逃げ、本文を読む Policy が黙ってスキップされて上流が 400 を返す。
+      # Claude Code の本文は 100KB を超える
+      KONG_NGINX_HTTP_CLIENT_BODY_BUFFER_SIZE: "16m"
+    volumes:
+      - ./.certs:/etc/kong/cluster-certs
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Codex 用。理由は codex-upstream/nginx.conf の先頭
+  codex-upstream:
+    image: openresty/openresty:1.27.1.2-alpine
+    networks: [kong-network]
+    restart: on-failure
+    volumes:
+      - ./codex-upstream/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro

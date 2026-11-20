@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# usage: codex-kong [codex args...]
+set -euo pipefail
+# shellcheck source=../lib/env.sh
+. "$(dirname "$(readlink -f "$0")")/../lib/env.sh"
+
+"$ROOT/bin/kong-up"
+# 呼び出し元の mise env などに入っている PAT をエージェントに渡さない
+unset KONNECT_PAT
+KONG_VIRTUAL_KEY=$(resolve_virtual_key)
+export KONG_VIRTUAL_KEY
+# API キーがあると ChatGPT ログインではなく API 課金の経路になる
+unset OPENAI_API_KEY OPENAI_BASE_URL
+
+# ~/.codex/config.toml は書き換えず、-c で上書きする。requires_openai_auth で ChatGPT ログインのトークンがそのまま送られる
+exec codex \
+  -c 'model_provider="kong"' \
+  -c 'model_providers.kong.name="Kong AI Gateway (local)"' \
+  -c "model_providers.kong.base_url=\"$(proxy_url)/codex\"" \
+  -c 'model_providers.kong.wire_api="responses"' \
+  -c 'model_providers.kong.requires_openai_auth=true' \
+  -c 'model_providers.kong.supports_websockets=false' \
+  -c 'model_providers.kong.env_http_headers={ "apikey" = "KONG_VIRTUAL_KEY" }' \
+  "$@"

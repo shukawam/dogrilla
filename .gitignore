@@ -1,0 +1,7 @@
+.env
+.certs/
+.secrets/
+# PREFIX を埋め込んだ生成物。正本は config/kongctl.yaml.tmpl
+config/kongctl.yaml
+compose.override.yaml
+mise.local.toml

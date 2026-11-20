@@ -1,0 +1,67 @@
+[tools]
+# YAML のアンカー・マージキーの扱いが版で変わるので固定する（config/kongctl.yaml.tmpl のコメント参照）
+"github:Kong/kongctl" = "1.26.0"
+
+[tasks.doctor]
+description = "前提（ツール、.env、PAT、残っている API キー）を確認する"
+run = "scripts/check.sh doctor"
+
+[tasks.setup]
+description = "証明書の作成から Konnect への適用、Virtual Key の発行、DP の起動までを通しで行う"
+run = "scripts/konnect.sh setup"
+
+[tasks.install]
+description = "claude-kong / codex-kong / kong-up を PATH に置く（既定 ~/.local/bin、BIN_DIR で変更）"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+dest="${BIN_DIR:-$HOME/.local/bin}"
+mkdir -p "$dest"
+for f in bin/*; do
+  target="$dest/$(basename "$f")"
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    echo "skip: $target はシンボリックリンクではないので上書きしません" >&2
+    continue
+  fi
+  ln -sfn "$PWD/$f" "$target"
+  echo "linked: $target -> $PWD/$f"
+done
+case ":$PATH:" in *":$dest:"*) ;; *) echo "$dest が PATH にありません" >&2 ;; esac
+'''
+
+[tasks.principals]
+description = "Kong Identity の Principal を表示名で探す（mise run principals -- 名前の一部）"
+run = "scripts/konnect.sh principals"
+
+[tasks.virtual-key]
+description = "PRINCIPAL_ID に Virtual Key を発行して .env に書く"
+run = "scripts/konnect.sh virtual-key"
+
+[tasks.render]
+description = "config/kongctl.yaml.tmpl から config/kongctl.yaml を生成する"
+run = "scripts/konnect.sh render"
+
+[tasks.diff]
+description = "宣言的設定の差分を見る"
+run = "scripts/konnect.sh diff"
+
+[tasks.sync]
+description = "宣言的設定を適用する（宣言から消したリソースは削除される）"
+run = "scripts/konnect.sh sync"
+
+[tasks.up]
+description = "DP を起動する"
+run = "bin/kong-up"
+
+[tasks.down]
+description = "DP を止める"
+run = "bin/kong-up stop"
+
+[tasks.logs]
+description = "DP のログを追う"
+raw = true
+run = "bin/kong-up logs"
+
+[tasks.smoke]
+description = "疎通を確認する"
+run = "scripts/check.sh smoke"
