@@ -30,7 +30,7 @@ mise run principals -- <自分の名前の一部>   # 出てきた ID を .env �
 mise run doctor
 mise run setup                      # 証明書 → Konnect に適用 → Attribution → Virtual Key 発行 → DP 起動
 mise run smoke
-mise run install                    # claude-kong / codex-kong / kong-up を ~/.local/bin にリンク
+mise run install                    # claude-kong / codex-kong / kong-up を ~/.local/bin に、グローバルな mise タスクを conf.d にリンク
 ```
 
 `mise run setup` は何度実行しても構いません。Konnect には `<PREFIX>-agent-gateway` という AI Gateway が namespace `<PREFIX>-agent-gateway` で作られ、ほかの人のリソースには触れません。
@@ -44,11 +44,13 @@ kong-up stop                 # DP を止める（claude-kong / codex-kong は必
 kong-up logs
 ```
 
+同じことは、どのディレクトリからでも `mise run claude:kong` / `codex:kong` / `kong:up` / `kong:down` / `kong:logs` でもできます（`mise/global.toml`）。自分用の使い分け（アカウントごとのタスクなど）は、リポジトリに入れずに `~/.config/mise/conf.d/` の別ファイルに書きます。
+
 Claude Code の `/status` で、Anthropic base URL が `http://localhost:18000/claude`、ログイン方法が claude.ai アカウントになっていれば正しく通っています。
 
 - 複数の Claude アカウントを使い分けるときは、`CLAUDE_CONFIG_DIR=~/.claude-other claude-kong` のようにプロファイルを分けます。利用者を分けて集計したいなら、`KONG_VIRTUAL_KEY=... claude-kong` で別の Principal の Virtual Key を渡します。
 - Git リポジトリの中で起動すると、リポジトリ名とブランチを Konnect のタグ（`scm-*`）に送ります。送りたくないディレクトリは `.env` の `SCM_TAG_EXCLUDE_DIRS` に書きます。
-- Virtual Key を `.env` に置きたくないときは、`KONG_VIRTUAL_KEY` を空にして `KONG_VIRTUAL_KEY_OP_REF="op://..."` を設定します。
+- Virtual Key を `.env` に置きたくないときは、`KONG_VIRTUAL_KEY` を空にして `KONG_VIRTUAL_KEY_OP_REF="op://..."` を設定します。呼び出し時の環境変数（`KONG_VIRTUAL_KEY`、`KONG_VIRTUAL_KEY_OP_REF` の順）は `.env` より優先されます。
 
 ## 注意点
 
@@ -66,5 +68,6 @@ Claude Code の `/status` で、Anthropic base URL が `http://localhost:18000/c
 | `compose.yaml` | DP と Codex 用の中継。手元だけの変更は `compose.override.yaml`（git 管理外）に書く |
 | `codex-upstream/nginx.conf` | ChatGPT のバックエンドへの中継 |
 | `bin/` | `claude-kong` / `codex-kong` / `kong-up` |
+| `mise/global.toml` | グローバルな mise タスク（`mise run install` で conf.d にリンク） |
 | `scripts/` | セットアップと確認のスクリプト（`mise run` から呼ぶ） |
 | `docs/design-notes.md` | なぜこの構成なのか、実測で分かったこと |

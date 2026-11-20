@@ -1,0 +1,37 @@
+# mise run install が ~/.config/mise/conf.d/dogrilla.toml としてリンクする。どのディレクトリからでも mise run で呼べる
+# bin/ のコマンドは PATH から呼ぶ（同じく mise run install が ~/.local/bin に置く）。引数は mise run claude:kong -- --resume のように渡す
+
+[tasks."claude:kong"]
+description = "ローカル Kong 経由で Claude Code を起動（dogrilla）"
+# 呼び出し元のリポジトリ名・ブランチを scm タグに使うので、カレントディレクトリで動かす
+dir = "{{cwd}}"
+raw = true
+quiet = true
+run = '''
+#!/usr/bin/env bash
+exec claude-kong "$@"
+'''
+
+[tasks."codex:kong"]
+description = "ローカル Kong 経由で Codex CLI を起動（dogrilla）"
+dir = "{{cwd}}"
+raw = true
+quiet = true
+run = '''
+#!/usr/bin/env bash
+exec codex-kong "$@"
+'''
+
+[tasks."kong:up"]
+description = "ローカルの Kong AI Gateway（DP）を起動する（dogrilla）"
+run = "kong-up"
+
+[tasks."kong:down"]
+description = "ローカルの Kong AI Gateway を止める（dogrilla）"
+run = "kong-up stop"
+
+[tasks."kong:logs"]
+description = "ローカルの Kong AI Gateway のログを追う（dogrilla）"
+raw = true
+quiet = true
+run = "kong-up logs"

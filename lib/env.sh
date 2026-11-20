@@ -63,14 +63,21 @@ status_url() {
   printf 'http://localhost:%s' "${port:-18100}"
 }
 
+op_read_key() {
+  op read "$1" || die "1Password（$1）から Virtual Key を読めませんでした"
+}
+
+# 呼び出し時の指定を .env より優先する。値と参照を同じ層で比べないと、.env の鍵が呼び出し時の OP_REF を潰す
 resolve_virtual_key() {
-  local key ref
-  key=$(env_or_file KONG_VIRTUAL_KEY)
-  if [ -z "$key" ]; then
-    ref=$(env_or_file KONG_VIRTUAL_KEY_OP_REF)
-    if [ -n "$ref" ]; then
-      key=$(op read "$ref") || die "1Password（$ref）から Virtual Key を読めませんでした"
-    fi
+  local key=""
+  if [ -n "${KONG_VIRTUAL_KEY:-}" ]; then
+    key="$KONG_VIRTUAL_KEY"
+  elif [ -n "${KONG_VIRTUAL_KEY_OP_REF:-}" ]; then
+    key=$(op_read_key "$KONG_VIRTUAL_KEY_OP_REF")
+  elif [ -n "$(env_get KONG_VIRTUAL_KEY)" ]; then
+    key=$(env_get KONG_VIRTUAL_KEY)
+  elif [ -n "$(env_get KONG_VIRTUAL_KEY_OP_REF)" ]; then
+    key=$(op_read_key "$(env_get KONG_VIRTUAL_KEY_OP_REF)")
   fi
   [ -n "$key" ] || die "Virtual Key がありません。mise run setup を実行するか、.env の KONG_VIRTUAL_KEY / KONG_VIRTUAL_KEY_OP_REF を設定してください"
   printf '%s' "$key"

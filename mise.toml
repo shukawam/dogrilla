@@ -11,22 +11,28 @@ description = "証明書の作成から Konnect への適用、Virtual Key の�
 run = "scripts/konnect.sh setup"
 
 [tasks.install]
-description = "claude-kong / codex-kong / kong-up を PATH に置く（既定 ~/.local/bin、BIN_DIR で変更）"
+description = "claude-kong / codex-kong / kong-up を PATH に置き（既定 ~/.local/bin、BIN_DIR で変更）、グローバルな mise タスクを登録する"
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
+link() {
+  local src="$1" target="$2"
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    echo "skip: $target はシンボリックリンクではないので上書きしません" >&2
+    return 0
+  fi
+  ln -sfn "$src" "$target"
+  echo "linked: $target -> $src"
+}
 dest="${BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$dest"
 for f in bin/*; do
-  target="$dest/$(basename "$f")"
-  if [ -e "$target" ] && [ ! -L "$target" ]; then
-    echo "skip: $target はシンボリックリンクではないので上書きしません" >&2
-    continue
-  fi
-  ln -sfn "$PWD/$f" "$target"
-  echo "linked: $target -> $PWD/$f"
+  link "$PWD/$f" "$dest/$(basename "$f")"
 done
 case ":$PATH:" in *":$dest:"*) ;; *) echo "$dest が PATH にありません" >&2 ;; esac
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/mise/conf.d"
+mkdir -p "$conf"
+link "$PWD/mise/global.toml" "$conf/dogrilla.toml"
 '''
 
 [tasks.principals]
